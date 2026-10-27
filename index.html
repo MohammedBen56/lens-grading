@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lens Grading</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <h1>Lens Grading</h1>
+    <p class="sub">COSMOS-Web DR1 · candidates of the MIRAGE-v1 and v1.1 detectors</p>
+  </div>
+  <div class="who" id="who" hidden>
+    <span id="whoName"></span>
+    <button class="ghost" id="helpBtn" type="button" title="Keyboard shortcuts">?</button>
+    <button class="ghost" id="logoutBtn" type="button">Log out</button>
+  </div>
+</header>
+
+<main>
+  <!-- ---------------------------------------------------------------- login -->
+  <section id="loginView" class="card login" hidden>
+    <h2>Sign in</h2>
+    <p class="muted">Use the email and password the project admin gave you.</p>
+    <form id="loginForm">
+      <label>Email <input id="email" type="email" autocomplete="username" required></label>
+      <label>Password <input id="password" type="password" autocomplete="current-password" required></label>
+      <button class="primary" type="submit">Sign in</button>
+      <p class="error" id="loginError" role="alert"></p>
+    </form>
+  </section>
+
+  <section id="messageView" class="card" hidden><p id="message"></p></section>
+
+  <!-- ---------------------------------------------------------------- grading -->
+  <section id="gradeView" hidden>
+    <nav class="toolbar">
+      <button id="reviewSkippedBtn" type="button">Review skipped (<span id="nSkipped">0</span>)</button>
+      <button id="exportMineBtn" type="button">Export my votes (CSV)</button>
+      <button id="fullWidthBtn" type="button" aria-pressed="false">Full width</button>
+      <button id="adminBtn" type="button" hidden>Admin</button>
+    </nav>
+
+    <div class="grid" id="grid">
+      <figure class="card imageCard">
+        <div class="imageWrap"><img id="cutout" alt="Candidate cutout"><div class="loading" id="imgLoading">Loading image…</div></div>
+        <figcaption>
+          <span id="candId" class="mono"></span>
+          <span class="links"><a id="viewerLink" target="_blank" rel="noopener">COSMOS-Web viewer ↗</a> · <a id="sedLink" target="_blank" rel="noopener">SED &amp; morphology ↗</a></span>
+          <span id="position" class="mono muted"></span>
+        </figcaption>
+      </figure>
+
+      <aside class="card side">
+        <h2>Classification</h2>
+        <div class="grades" id="grades" role="radiogroup" aria-label="Grade"></div>
+        <label class="noteLabel" for="note">Notes / comments</label>
+        <textarea id="note" rows="3" maxlength="2000" placeholder="Add any observations about this candidate…"></textarea>
+        <p class="saveState" id="saveState" aria-live="polite"></p>
+        <div class="navBtns">
+          <button id="skipBtn" type="button">Skip</button>
+          <button id="prevBtn" type="button">← Previous</button>
+          <button id="nextBtn" type="button" class="primary">Next →</button>
+          <button id="nextOpenBtn" type="button">Next unclassified ⟶</button>
+        </div>
+        <label class="auto"><input type="checkbox" id="autoAdvance" checked> Go to the next unclassified after grading</label>
+      </aside>
+    </div>
+
+    <div class="stats">
+      <div><b id="sTotal">0</b><span>total</span></div>
+      <div><b id="sDone">0</b><span>classified</span></div>
+      <div><b id="sLeft">0</b><span>remaining</span></div>
+      <div><b id="sPct">0 %</b><span>progress</span></div>
+      <div><b id="sSkip">0</b><span>skipped</span></div>
+    </div>
+  </section>
+
+  <!-- ---------------------------------------------------------------- admin -->
+  <section id="adminView" hidden>
+    <div class="card adminHead">
+      <div><h2>Admin dashboard</h2><p class="muted small" id="adminStamp"></p></div>
+      <div class="toolbar flat">
+        <button id="refreshBtn" type="button">Refresh</button>
+        <button id="exportConsensusBtn" type="button">Export candidate summary (CSV)</button>
+        <button id="exportAllBtn" type="button">Export all votes (CSV)</button>
+        <button id="backBtn" type="button" class="primary">← Back to grading</button>
+      </div>
+    </div>
+    <p class="error" id="adminError" role="alert"></p>
+
+    <div class="tiles" id="adminTiles"></div>
+
+    <div class="card block">
+      <h3>Graders</h3>
+      <div class="tableWrap"><table id="progressTable"><thead><tr><th>grader</th><th class="num">votes</th><th class="num">of all candidates</th><th class="num">A</th><th class="num">B</th><th class="num">C</th><th class="num">S</th><th class="num">X</th><th>last vote</th></tr></thead><tbody></tbody></table></div>
+    </div>
+
+    <div class="card block">
+      <h3>Grades against the detectors' original order</h3>
+      <p class="muted small">Each detector ranked its top 200 candidates (rank 1 = highest lens probability). For every rank range: how many of its candidates have been graded, their mean score (A = 3, B = 2, C = 1, S = 0, X = 0), and how many are mostly A/B or mostly X. Spearman ρ compares the detector order with the graders' mean score (+1 = same order, 0 = unrelated).</p>
+      <div class="tableWrap"><table id="rankTable"><thead><tr><th>detector</th><th>rank range</th><th class="num">candidates</th><th class="num">graded</th><th class="num">mean score</th><th class="num">mostly A or B</th><th class="num">mostly X (not a lens)</th></tr></thead><tbody></tbody></table></div>
+      <p id="rankRho" class="small"></p>
+    </div>
+
+    <div class="card block">
+      <h3>Candidates</h3>
+      <p class="muted small">Sorted by the graders' mean score; click a column title to sort by it, and a candidate id to see its image. "Most frequent" lists every grade with the top count; "agreement" is the share of votes with that grade.</p>
+      <div class="chips" id="filterChips" role="tablist"></div>
+      <div class="tableWrap"><table id="consensusTable" class="dense"><thead></thead><tbody></tbody></table></div>
+    </div>
+  </section>
+
+  <dialog id="imgDialog" class="wide">
+    <div class="adminHead"><b id="imgDlgTitle"></b><form method="dialog"><button type="submit">Close</button></form></div>
+    <div class="imageWrap"><img id="imgDlgImg" alt="Candidate cutout"><div class="loading" id="imgDlgLoading">Loading image…</div></div>
+    <p id="imgDlgInfo" class="small"></p>
+  </dialog>
+
+  <dialog id="helpDialog">
+    <h2>Keyboard shortcuts</h2>
+    <ul>
+      <li><kbd>A</kbd> <kbd>B</kbd> <kbd>C</kbd> <kbd>S</kbd> <kbd>X</kbd> — grade (or <kbd>1</kbd>–<kbd>5</kbd>)</li>
+      <li><kbd>→</kbd> next · <kbd>←</kbd> previous · <kbd>N</kbd> next unclassified · <kbd>K</kbd> skip</li>
+      <li><kbd>F</kbd> full width · <kbd>?</kbd> this help</li>
+    </ul>
+    <form method="dialog"><button class="primary">Close</button></form>
+  </dialog>
+</main>
+<script src="app.js"></script>
+</body>
+</html>
