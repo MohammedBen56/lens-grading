@@ -1,4 +1,5 @@
-// Lens grading site. Graders see candidates in their own shuffled order, without detector, rank or score.
+// Lens grading site. Graders see candidates in detector-score order, highest first (column candidates.display_order, see
+// supabase/2026-10-28_display_order.sql), without detector name or score. Without that column: each grader's own shuffled order.
 // Backend: Supabase (auth, tables `graders`, `candidates`, `votes`, private bucket `cutouts`); see supabase/schema.sql.
 // Demo mode (config without a URL, or ?demo in the address): sample images from ./demo, votes kept in this browser only.
 "use strict";
@@ -24,7 +25,7 @@ function supabaseBackend() {
     async signIn(email, password) { return must(await sb.auth.signInWithPassword({ email, password })).user; },
     async signOut() { await sb.auth.signOut(); },
     async grader(uid) { return must(await sb.from("graders").select("display_name,is_admin").eq("user_id", uid).maybeSingle()); },
-    async candidates() { return must(await sb.from("candidates").select("id,image_path,ra,dec,viewer_url,sed_url").order("id")); },
+    async candidates() { return must(await sb.from("candidates").select("*").order("id")); },   // "*": works with or without display_order
     async myVotes(uid) { return must(await sb.from("votes").select("candidate_id,grade,note,updated_at").eq("user_id", uid)); },
     async saveVote(uid, id, grade, note) {
       return must(await sb.from("votes").upsert({ candidate_id: id, user_id: uid, grade, note: note || null }, { onConflict: "candidate_id,user_id" }).select("updated_at").single());
@@ -74,7 +75,12 @@ function demoBackend() {
   };
 }
 
-// ------------------------------------------------------------------ deterministic per-grader order
+// ------------------------------------------------------------------ order: by display_order (score order) if every candidate has one,
+// otherwise a deterministic per-grader shuffle
+function ordered(items, seedText) {
+  if (items.every((c) => Number.isInteger(c.display_order))) return items.slice().sort((a, b) => a.display_order - b.display_order);
+  return shuffled(items, seedText);
+}
 function hash32(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
 function rng(seed) { return () => { seed |= 0; seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 function shuffled(items, seedText) { const a = items.slice(), r = rng(hash32(seedText)); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
@@ -106,7 +112,7 @@ async function enter() {
     $("adminBtn").hidden = !S.grader.is_admin;
     const [cands, votes] = await Promise.all([api.candidates(), api.myVotes(S.user.id)]);
     if (!cands.length) { message("No candidates are loaded yet."); return; }
-    S.items = shuffled(cands, S.user.id);
+    S.items = ordered(cands, S.user.id);
     S.votes = new Map(votes.map((v) => [v.candidate_id, v]));
     S.skipped = new Set(pref("skipped", []));
     $("autoAdvance").checked = pref("autoAdvance", true);
